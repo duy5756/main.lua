@@ -1,7 +1,7 @@
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
-local REJOIN_TIME = 120
+local REJOIN_TIME = 3600
 local REJOIN_WAIT = 25
 
 local player = Players.LocalPlayer
