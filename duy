@@ -3,11 +3,11 @@ local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
 local REJOIN_TIME = 3600 -- 1 tiếng đổi server giải phóng RAM
-local REJOIN_WAIT = 25
+local FAIL_RETRY_TIME = 15 -- Thời gian chờ thử lại nếu lỗi teleport
 
 local player = Players.LocalPlayer
 
--- DANH SÁCH 12 ACC CỐ ĐỊNH CỦA BẠN
+-- DANH SÁCH 12 ACC CỐ ĐỊNH ĐẦY ĐỦ CỦA BẠN
 local myAccounts = {
 	["tannguyenn11"] = 1,
 	["kobeoikk2008"] = 2,
@@ -27,7 +27,7 @@ local currentName = player.Name
 local accIndex = myAccounts[currentName]
 local isUnknownAccount = false
 
--- TRƯỜNG HỢP: Nếu không tìm thấy tên trong danh sách (Acc lạ)
+-- TRƯỜNG HỢP: Nếu không tìm thấy tên trong danh sách
 if not accIndex then
 	isUnknownAccount = true
 	local nameSeed = #currentName
@@ -37,52 +37,22 @@ if not accIndex then
 	accIndex = nameSeed
 end
 
--- Khởi tạo bộ sinh số ngẫu nhiên chuẩn Luau mới
+-- Khởi tạo bộ sinh số ngẫu nhiên dựa trên bộ sinh số độc lập
 local rng = Random.new(os.time() + accIndex)
 
-pcall(function()
-	local pg = player:WaitForChild("PlayerGui")
-	local old = pg:FindFirstChild("RejoinTimer")
-	if old then old:Destroy() end
-end)
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "RejoinTimer"
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
-
-local label = Instance.new("TextLabel")
-label.Size = UDim2.new(0,140,0,28)
-label.Position = UDim2.new(1,-150,0,10)
-label.BackgroundColor3 = Color3.fromRGB(0,0,0)
-label.BackgroundTransparency = 0.35
-label.TextColor3 = Color3.fromRGB(255,255,255)
-label.BorderSizePixel = 0
-label.TextScaled = true
-label.Parent = gui
-
-local function formatTime(s)
-	if s < 0 then s = 0 end
-	local h = math.floor(s/3600)
-	local m = math.floor((s%3600)/60)
-	local sec = math.floor(s%60)
-	return string.format("%02d:%02d:%02d",h,m,sec)
-end
-
--- Hàm quét tối đa 3 trang (~300 server) và phân bổ vùng thông minh
+-- Hàm quét tối đa 3 trang server và phân bổ vùng thông minh
 local function getTargetServerId()
 	local placeId = game.PlaceId
 	local currentJobId = game.JobId
 	local validServers = {}
-
 	local cursor = ""
+
 	for page = 1, 3 do
 		local url = "https://games.roproxy.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
 		if cursor ~= "" then
 			url = url .. "&cursor=" .. cursor
 		end
 
-		-- Bọc toàn bộ quá trình Get và Decode vào pcall để tránh crash do proxy lỗi
 		local success, result = pcall(function()
 			local response = game:HttpGet(url)
 			return HttpService:JSONDecode(response)
@@ -101,19 +71,17 @@ local function getTargetServerId()
 		else
 			break
 		end
-
-		task.wait(0.5)
+		task.wait(0.25)
 	end
 
-	-- --- LOGIC PHÂN CHIA SERVER ---
+	-- --- LOGIC PHÂN CHIA SERVER THEO TÀI KHOẢN ---
 	local totalServers = #validServers
 	if totalServers > 0 then
 		if isUnknownAccount then
-			-- Sử dụng rng:NextInteger thay cho math.random
 			return validServers[rng:NextInteger(1, totalServers)]
 		else
 			local chunk_size = math.floor(totalServers / 12)
-			if chunk_size < 2 then chunk_size = 2 end
+			if chunk_size < 1 then chunk_size = 1 end
 
 			local start_index = ((accIndex - 1) * chunk_size) + 1
 			local end_index = accIndex * chunk_size
@@ -131,62 +99,36 @@ end
 local function safeTeleport()
 	for i = 1, 3 do
 		local targetServerId = getTargetServerId()
+		local ok
 
 		if targetServerId then
-			local ok = pcall(function()
+			ok = pcall(function()
 				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServerId, player)
 			end)
-			if ok then return true end
 		else
-			local ok = pcall(function()
+			ok = pcall(function()
 				TeleportService:Teleport(game.PlaceId, player)
 			end)
-			if ok then return true end
 		end
-		task.wait(5)
+		
+		if ok then return true end
+		task.wait(3)
 	end
 	return false
 end
 
-local startTime = os.clock()
-local isRejoining = false
-local customWaitTime = nil
-
+-- VÒNG LẶP CHÍNH CHẠY NGẦM
 while true do
-	if not isRejoining then
-		local remain = REJOIN_TIME - (os.clock() - startTime)
-		
-		-- Nếu đang trong chế độ chờ thử lại (sau khi lỗi) thì ép thời gian hiển thị
-		if customWaitTime then
-			remain = customWaitTime
-			customWaitTime = customWaitTime - 1
-			if customWaitTime <= 0 then customWaitTime = nil end
-		end
+	task.wait(REJOIN_TIME) -- Chờ đủ 1 tiếng chạy ngầm hoàn toàn
+	
+	local success = safeTeleport()
 
-		if remain > 0 then
-			label.Text = formatTime(remain)
-			task.wait(1)
-		else
-			isRejoining = true
-			label.Text = "Server Hopping..."
-
-			local success = safeTeleport()
-
-			if success then
-				-- Đóng băng vòng lặp tại đây để chờ Roblox ngắt kết nối hoàn toàn, tránh chạy tiếp tốn tài nguyên
-				label.Text = "Teleporting..."
-				while true do task.wait(1) end 
-			else
-				-- Thất bại: Đặt thời gian chờ thử lại là 10 giây một cách tường minh
-				label.Text = "Lỗi! Thử lại sau 10s..."
-				customWaitTime = 10
-				startTime = os.clock() -- Reset lại mốc gốc
-				task.wait(10)
-			end
-
-			isRejoining = false
-		end
+	if success then
+		-- Tự hủy script để giải phóng RAM tối đa trong khi chờ Roblox ngắt kết nối
+		script.Disabled = true
+		return
 	else
-		task.wait(1)
+		-- Nếu lỗi, đợi một khoảng thời gian cố định rồi tự động thử lại ở vòng lặp sau
+		task.wait(FAIL_RETRY_TIME)
 	end
 end
