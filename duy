@@ -1,10 +1,44 @@
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
 
 local REJOIN_TIME = 3600 -- 1 tiếng đổi server giải phóng RAM
 local REJOIN_WAIT = 25
 
 local player = Players.LocalPlayer
+
+-- DANH SÁCH 12 ACC CỐ ĐỊNH CỦA BẠN
+local myAccounts = {
+	["tannguyenn11"] = 1,
+	["kobeoikk2008"] = 2,
+	["khoimoiiwq"] = 3,
+	["rwqryua665"] = 4,
+	["huy382038"] = 5,
+	["bwawege"] = 6,
+	["noridomigaming"] = 7,
+	["HvdviaDGy3"] = 8,
+	["hello876757"] = 9,
+	["Meky_Sempai"] = 10,
+	["ngthanhok"] = 11,
+	["Benkenzzzzz1234"] = 12
+}
+
+local currentName = player.Name
+local accIndex = myAccounts[currentName]
+local isUnknownAccount = false
+
+-- TRƯỜNG HỢP: Nếu không tìm thấy tên trong danh sách (Acc lạ)
+if not accIndex then
+	isUnknownAccount = true
+	local nameSeed = #currentName
+	for i = 1, #currentName do
+		nameSeed = nameSeed + string.byte(currentName, i)
+	end
+	accIndex = nameSeed
+end
+
+-- Khởi tạo bộ sinh số ngẫu nhiên chuẩn Luau mới
+local rng = Random.new(os.time() + accIndex)
 
 pcall(function()
 	local pg = player:WaitForChild("PlayerGui")
@@ -28,35 +62,67 @@ label.TextScaled = true
 label.Parent = gui
 
 local function formatTime(s)
+	if s < 0 then s = 0 end
 	local h = math.floor(s/3600)
 	local m = math.floor((s%3600)/60)
 	local sec = math.floor(s%60)
 	return string.format("%02d:%02d:%02d",h,m,sec)
 end
 
--- Đã sửa: Thay đổi endpoint sang RoProxy để không bị Roblox chặn request
+-- Hàm quét tối đa 3 trang (~300 server) và phân bổ vùng thông minh
 local function getTargetServerId()
 	local placeId = game.PlaceId
 	local currentJobId = game.JobId
-	-- Sử dụng roproxy.com thay vì roblox.com
-	local url = "https://games.roproxy.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
-	
-	-- Delta/Exploit sử dụng hàm HttpGet toàn cục (hoặc game:HttpGet) qua Proxy
-	local success, result = pcall(function()
-		-- Dùng hàm HttpGet mặc định của Executor
-		return game:GetService("HttpService"):JSONDecode(game:HttpGet(url))
-	end)
-	
-	if success and result and result.data then
-		local validServers = {}
-		for _, server in ipairs(result.data) do
-			if server.playing and server.maxPlayers and server.playing < server.maxPlayers and server.id ~= currentJobId then
-				table.insert(validServers, server.id)
-			end
+	local validServers = {}
+
+	local cursor = ""
+	for page = 1, 3 do
+		local url = "https://games.roproxy.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+		if cursor ~= "" then
+			url = url .. "&cursor=" .. cursor
 		end
-		
-		if #validServers > 0 then
-			return validServers[math.random(1, #validServers)]
+
+		-- Bọc toàn bộ quá trình Get và Decode vào pcall để tránh crash do proxy lỗi
+		local success, result = pcall(function()
+			local response = game:HttpGet(url)
+			return HttpService:JSONDecode(response)
+		end)
+
+		if success and result and result.data then
+			for _, server in ipairs(result.data) do
+				if server.playing and server.maxPlayers and server.playing < server.maxPlayers and server.id ~= currentJobId then
+					table.insert(validServers, server.id)
+				end
+			end
+			cursor = result.nextPageCursor
+			if not cursor or cursor == "" then
+				break
+			end
+		else
+			break
+		end
+
+		task.wait(0.5)
+	end
+
+	-- --- LOGIC PHÂN CHIA SERVER ---
+	local totalServers = #validServers
+	if totalServers > 0 then
+		if isUnknownAccount then
+			-- Sử dụng rng:NextInteger thay cho math.random
+			return validServers[rng:NextInteger(1, totalServers)]
+		else
+			local chunk_size = math.floor(totalServers / 12)
+			if chunk_size < 2 then chunk_size = 2 end
+
+			local start_index = ((accIndex - 1) * chunk_size) + 1
+			local end_index = accIndex * chunk_size
+
+			if start_index > totalServers then start_index = 1 end
+			if end_index > totalServers then end_index = totalServers end
+			if end_index < start_index then end_index = start_index end
+
+			return validServers[rng:NextInteger(start_index, end_index)]
 		end
 	end
 	return nil
@@ -65,30 +131,37 @@ end
 local function safeTeleport()
 	for i = 1, 3 do
 		local targetServerId = getTargetServerId()
-		
+
 		if targetServerId then
 			local ok = pcall(function()
 				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServerId, player)
 			end)
 			if ok then return true end
 		else
-			-- Dự phòng nếu proxy sập hoặc lỗi API
 			local ok = pcall(function()
 				TeleportService:Teleport(game.PlaceId, player)
 			end)
 			if ok then return true end
 		end
-		task.wait(5) -- Tăng thời gian chờ lên 5 giây để tránh spam request liên tục
+		task.wait(5)
 	end
 	return false
 end
 
 local startTime = os.clock()
 local isRejoining = false
+local customWaitTime = nil
 
 while true do
 	if not isRejoining then
 		local remain = REJOIN_TIME - (os.clock() - startTime)
+		
+		-- Nếu đang trong chế độ chờ thử lại (sau khi lỗi) thì ép thời gian hiển thị
+		if customWaitTime then
+			remain = customWaitTime
+			customWaitTime = customWaitTime - 1
+			if customWaitTime <= 0 then customWaitTime = nil end
+		end
 
 		if remain > 0 then
 			label.Text = formatTime(remain)
@@ -100,13 +173,17 @@ while true do
 			local success = safeTeleport()
 
 			if success then
-				task.wait(REJOIN_WAIT)
+				-- Đóng băng vòng lặp tại đây để chờ Roblox ngắt kết nối hoàn toàn, tránh chạy tiếp tốn tài nguyên
+				label.Text = "Teleporting..."
+				while true do task.wait(1) end 
 			else
+				-- Thất bại: Đặt thời gian chờ thử lại là 10 giây một cách tường minh
 				label.Text = "Lỗi! Thử lại sau 10s..."
-				task.wait(10) 
+				customWaitTime = 10
+				startTime = os.clock() -- Reset lại mốc gốc
+				task.wait(10)
 			end
 
-			startTime = os.clock()
 			isRejoining = false
 		end
 	else
