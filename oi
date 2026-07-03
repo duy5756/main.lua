@@ -1,115 +1,44 @@
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
-local REJOIN_TIME = 160 -- 1 tiếng đổi server giải phóng RAM
-local REJOIN_WAIT = 25
-
+local REJOIN_TIME = 3600 -- 1 tiếng
 local player = Players.LocalPlayer
 
-pcall(function()
-	local pg = player:WaitForChild("PlayerGui")
+-- Xóa UI cũ một cách an toàn nếu có
+local pg = player:FindFirstChildOfClass("PlayerGui")
+if pg then
 	local old = pg:FindFirstChild("RejoinTimer")
 	if old then old:Destroy() end
-end)
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "RejoinTimer"
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
-
-local label = Instance.new("TextLabel")
-label.Size = UDim2.new(0,140,0,28)
-label.Position = UDim2.new(1,-150,0,10)
-label.BackgroundColor3 = Color3.fromRGB(0,0,0)
-label.BackgroundTransparency = 0.35
-label.TextColor3 = Color3.fromRGB(255,255,255)
-label.BorderSizePixel = 0
-label.TextScaled = true
-label.Parent = gui
-
-local function formatTime(s)
-	local h = math.floor(s/3600)
-	local m = math.floor((s%3600)/60)
-	local sec = math.floor(s%60)
-	return string.format("%02d:%02d:%02d",h,m,sec)
 end
 
--- Đã sửa: Thay đổi endpoint sang RoProxy để không bị Roblox chặn request
-local function getTargetServerId()
-	local placeId = game.PlaceId
-	local currentJobId = game.JobId
-	-- Sử dụng roproxy.com thay vì roblox.com
-	local url = "https://games.roproxy.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
-	
-	-- Delta/Exploit sử dụng hàm HttpGet toàn cục (hoặc game:HttpGet) qua Proxy
-	local success, result = pcall(function()
-		-- Dùng hàm HttpGet mặc định của Executor
-		return game:GetService("HttpService"):JSONDecode(game:HttpGet(url))
-	end)
-	
-	if success and result and result.data then
-		local validServers = {}
-		for _, server in ipairs(result.data) do
-			if server.playing and server.maxPlayers and server.playing < server.maxPlayers and server.id ~= currentJobId then
-				table.insert(validServers, server.id)
-			end
-		end
-		
-		if #validServers > 0 then
-			return validServers[math.random(1, #validServers)]
-		end
-	end
-	return nil
-end
-
+-- Hàm teleport an toàn
 local function safeTeleport()
 	for i = 1, 3 do
-		local targetServerId = getTargetServerId()
-		
-		if targetServerId then
-			local ok = pcall(function()
-				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServerId, player)
-			end)
-			if ok then return true end
-		else
-			-- Dự phòng nếu proxy sập hoặc lỗi API
-			local ok = pcall(function()
-				TeleportService:Teleport(game.PlaceId, player)
-			end)
-			if ok then return true end
-		end
-		task.wait(5) -- Tăng thời gian chờ lên 5 giây để tránh spam request liên tục
+		local ok = pcall(function()
+			TeleportService:Teleport(game.PlaceId) 
+		end)
+
+		if ok then return true end
+		task.wait(3)
 	end
 	return false
 end
 
-local startTime = os.clock()
-local isRejoining = false
-
+-- Vòng lặp chính siêu tối ưu và không thể bị kẹt
 while true do
-	if not isRejoining then
-		local remain = REJOIN_TIME - (os.clock() - startTime)
-
-		if remain > 0 then
-			label.Text = formatTime(remain)
-			task.wait(1)
-		else
-			isRejoining = true
-			label.Text = "Server Hopping..."
-
-			local success = safeTeleport()
-
-			if success then
-				task.wait(REJOIN_WAIT)
-			else
-				label.Text = "Lỗi! Thử lại sau 10s..."
-				task.wait(10) 
-			end
-
-			startTime = os.clock()
-			isRejoining = false
-		end
+	-- Script ngủ thẳng 1 tiếng
+	task.wait(REJOIN_TIME)
+	
+	-- Hết giờ, tiến hành gọi lệnh dịch chuyển
+	local success = safeTeleport()
+	
+	if success then
+		-- Đợi 60 giây để Roblox xử lý việc chuyển server. 
+		-- Nếu sau 60 giây vẫn bị kẹt lại server cũ (do lỗi kết nối), 
+		-- vòng lặp sẽ tự động chạy tiếp một chu kỳ 1 tiếng mới chứ không bị đóng băng!
+		task.wait(60) 
 	else
-		task.wait(1)
+		-- Nếu cả 3 lần thử đều lỗi, đợi 10 giây rồi thử lại ngay lập tức thay vì đợi thêm 1 tiếng
+		task.wait(10)
 	end
 end
