@@ -1,110 +1,44 @@
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
 
-local REJOIN_TIME = 3600 -- 1 tiếng đổi server giải phóng RAM
-local FAIL_RETRY_TIME = 15 -- Thời gian chờ thử lại ngay lập tức nếu lỗi teleport
-
+local REJOIN_TIME = 3600 -- 1 tiếng
 local player = Players.LocalPlayer
 
--- DANH SÁCH 12 ACC CỐ ĐỊNH
-local myAccounts = {
-	["tannguyenn11"] = 1, ["kobeoikk2008"] = 2, ["khoimoiiwq"] = 3,
-	["rwqryua665"] = 4, ["huy382038"] = 5, ["bwawege"] = 6,
-	["noridomigaming"] = 7, ["HvdviaDGy3"] = 8, ["hello876757"] = 9,
-	["Meky_Sempai"] = 10, ["ngthanhok"] = 11, ["Benkenzzzzz1234"] = 12
-}
-
-local currentName = player.Name
-local accIndex = myAccounts[currentName]
-local isUnknownAccount = false
-
-if not accIndex then
-	isUnknownAccount = true
-	local nameSeed = #currentName
-	for i = 1, #currentName do
-		nameSeed = nameSeed + string.byte(currentName, i)
-	end
-	accIndex = nameSeed
+-- Xóa UI cũ một cách an toàn nếu có
+local pg = player:FindFirstChildOfClass("PlayerGui")
+if pg then
+	local old = pg:FindFirstChild("RejoinTimer")
+	if old then old:Destroy() end
 end
 
-local rng = Random.new(os.time() + accIndex)
-
-local function getTargetServerId()
-	local placeId = game.PlaceId
-	local currentJobId = game.JobId
-	local validServers = {}
-	local cursor = ""
-
-	for page = 1, 3 do
-		local url = "https://games.roproxy.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
-		if cursor ~= "" then url = url .. "&cursor=" .. cursor end
-
-		local success, result = pcall(function()
-			return HttpService:JSONDecode(game:HttpGet(url))
-		end)
-
-		if success and result and result.data then
-			for _, server in ipairs(result.data) do
-				if server.playing and server.maxPlayers and server.playing < server.maxPlayers and server.id ~= currentJobId then
-					table.insert(validServers, server.id)
-				end
-			end
-			cursor = result.nextPageCursor
-			if not cursor or cursor == "" then break end
-		else
-			break
-		end
-		task.wait(0.5) -- Tăng một chút để tránh rate limit khi mở nhiều tab clone
-	end
-
-	local totalServers = #validServers
-	if totalServers > 0 then
-		if isUnknownAccount then
-			return validServers[rng:NextInteger(1, totalServers)]
-		else
-			local chunk_size = math.max(1, math.floor(totalServers / 12))
-			
-			-- Sửa lỗi tràn Index bằng math.clamp
-			local start_index = math.clamp(((accIndex - 1) * chunk_size) + 1, 1, totalServers)
-			local end_index = math.clamp(accIndex * chunk_size, start_index, totalServers)
-
-			return validServers[rng:NextInteger(start_index, end_index)]
-		end
-	end
-	return nil
-end
-
+-- Hàm teleport an toàn
 local function safeTeleport()
 	for i = 1, 3 do
-		local targetServerId = getTargetServerId()
-		local ok
-		if targetServerId then
-			ok = pcall(function()
-				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServerId, player)
-			end)
-		else
-			ok = pcall(function()
-				TeleportService:Teleport(game.PlaceId, player)
-			end)
-		end
+		local ok = pcall(function()
+			TeleportService:Teleport(game.PlaceId) 
+		end)
+
 		if ok then return true end
-		task.wait(5) -- Tăng thời gian chờ phản hồi từ Roblox server
+		task.wait(3)
 	end
 	return false
 end
 
--- VÒNG LẶP CHÍNH CHẠY NGẦM (Đã sửa logic delay khi lỗi)
-task.wait(REJOIN_TIME) -- Đợi 1 tiếng đầu tiên sau khi vào game
-
+-- Vòng lặp chính siêu tối ưu và không thể bị kẹt
 while true do
+	-- Script ngủ thẳng 1 tiếng
+	task.wait(REJOIN_TIME)
+	
+	-- Hết giờ, tiến hành gọi lệnh dịch chuyển
 	local success = safeTeleport()
-
+	
 	if success then
-		script.Disabled = true
-		return
+		-- Đợi 60 giây để Roblox xử lý việc chuyển server. 
+		-- Nếu sau 60 giây vẫn bị kẹt lại server cũ (do lỗi kết nối), 
+		-- vòng lặp sẽ tự động chạy tiếp một chu kỳ 1 tiếng mới chứ không bị đóng băng!
+		task.wait(60) 
 	else
-		-- Nếu lỗi, chỉ đợi 15 giây rồi thử lại luôn, KHÔNG đợi tiếp 1 tiếng nữa.
-		task.wait(FAIL_RETRY_TIME)
+		-- Nếu cả 3 lần thử đều lỗi, đợi 10 giây rồi thử lại ngay lập tức thay vì đợi thêm 1 tiếng
+		task.wait(10)
 	end
 end
