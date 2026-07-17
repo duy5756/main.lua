@@ -1,7 +1,7 @@
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
-local REJOIN_TIME = 3000 -- 1 tiếng
+local REJOIN_TIME = 1600 -- 1 tiếng
 local player = Players.LocalPlayer
 
 -- Xóa UI cũ một cách an toàn nếu có
