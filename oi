@@ -1,44 +1,49 @@
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
-local REJOIN_TIME = 3600 -- 1 tiếng
+local REJOIN_TIME = 3600 -- 1 tiếng (3600 giây)
 local player = Players.LocalPlayer
 
--- Xóa UI cũ một cách an toàn nếu có
+-- Xóa UI cũ an toàn
 local pg = player:FindFirstChildOfClass("PlayerGui")
 if pg then
 	local old = pg:FindFirstChild("RejoinTimer")
 	if old then old:Destroy() end
 end
 
--- Hàm teleport an toàn
+-- Hàm teleport cải tiến sử dụng TeleportAsync
 local function safeTeleport()
 	for i = 1, 3 do
 		local ok = pcall(function()
-			TeleportService:Teleport(game.PlaceId) 
+			TeleportService:TeleportAsync(game.PlaceId, {player})
 		end)
 
 		if ok then return true end
-		task.wait(3)
+		task.wait(5) -- Đợi 5 giây trước khi thử lại
 	end
 	return false
 end
 
--- Vòng lặp chính siêu tối ưu và không thể bị kẹt
+-- Bắt lỗi chủ động từ hệ thống Roblox nếu khởi tạo thất bại
+TeleportService.TeleportInitFailed:Connect(function(failedPlayer, teleportResult, errorMessage)
+	if failedPlayer == player then
+		task.wait(15)
+		safeTeleport()
+	end
+end)
+
+-- Đợi đủ thời gian chơi game ban đầu
+task.wait(REJOIN_TIME)
+
+-- Vòng lặp chính xử lý Rejoin
 while true do
-	-- Script ngủ thẳng 1 tiếng
-	task.wait(REJOIN_TIME)
-	
-	-- Hết giờ, tiến hành gọi lệnh dịch chuyển
 	local success = safeTeleport()
 	
 	if success then
-		-- Đợi 60 giây để Roblox xử lý việc chuyển server. 
-		-- Nếu sau 60 giây vẫn bị kẹt lại server cũ (do lỗi kết nối), 
-		-- vòng lặp sẽ tự động chạy tiếp một chu kỳ 1 tiếng mới chứ không bị đóng băng!
+		-- Nếu thành công, đợi Roblox chuyển cảnh (đoạn này thường ko chạy tới vì đã đổi server)
 		task.wait(60) 
 	else
-		-- Nếu cả 3 lần thử đều lỗi, đợi 10 giây rồi thử lại ngay lập tức thay vì đợi thêm 1 tiếng
-		task.wait(10)
+		-- Nếu lỗi cả 3 lần (mất mạng/server bảo trì), thử lại liên tục sau mỗi 10 giây thay vì đợi 1 tiếng
+		task.wait(10) 
 	end
 end
