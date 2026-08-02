@@ -2,59 +2,50 @@ local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
 -- CONFIGURATION
-local REJOIN_TIME = 3600 -- Thời gian rejoin định kỳ (1 tiếng)
-local TARGET_PLACE_ID = 129343810645058 -- Thay ID Place mong muốn vào đây
+local REJOIN_TIME = 3600 
+local TARGET_PLACE_ID = 129343810645058 -- ID Place mục tiêu
 
--- Lấy LocalPlayer an toàn
 local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
--- Hàm Teleport an toàn với pcall
-local function safeTeleportTo(placeId)
-	for i = 1, 3 do
-		print("[Rejoin Script] Đang thử kết nối tới Place ID: " .. tostring(placeId) .. " (Lần " .. i .. ")")
-		
-		local ok, err = pcall(function()
-			-- Sử dụng TeleportService chuẩn
-			TeleportService:Teleport(placeId, player)
-		end)
-
-		if ok then
-			return true
-		else
-			warn("[Rejoin Script] Lỗi Teleport: " .. tostring(err))
-		end
-		task.wait(3)
+-- Bắt lỗi khi Roblox từ chối Teleport (ví dụ: bị cấm Third-Party, Server full...)
+TeleportService.TeleportInitFailed:Connect(function(tlPlayer, teleportResult, errorMessage)
+	if tlPlayer == player then
+		warn("[Rejoin Script] Teleport thất bại! Lý do: " .. tostring(errorMessage) .. " | Mã lỗi: " .. tostring(teleportResult))
 	end
-	return false
+end)
+
+-- Hàm Teleport chuẩn mới
+local function safeTeleportTo(placeId)
+	print("[Rejoin Script] Đang thử kết nối tới Place ID: " .. tostring(placeId))
+	
+	local options = Instance.new("TeleportOptions")
+	
+	local ok, err = pcall(function()
+		-- Dùng TeleportAsync thay cho Teleport cũ
+		TeleportService:TeleportAsync(placeId, {player}, options)
+	end)
+
+	if not ok then
+		warn("[Rejoin Script] Không thể gọi TeleportAsync: " .. tostring(err))
+		return false
+	end
+	return true
 end
 
 -- TỰ ĐỘNG ĐIỀU HƯỚNG BẮT ĐẦU
-
 if game.PlaceId ~= TARGET_PLACE_ID then
-	warn("[Rejoin Script] Không đúng Place ID. Đang chuyển sang Place ID: " .. tostring(TARGET_PLACE_ID))
+	warn("[Rejoin Script] Đang ở sai Game/Place (ID hiện tại: " .. game.PlaceId .. "). Đang chuyển sang Place ID: " .. TARGET_PLACE_ID)
 	
-	local retryCount = 0
-	while retryCount < 5 do -- Giới hạn 5 lần thử để tránh lặp vô tận khi sai Place ID
-		local success = safeTeleportTo(TARGET_PLACE_ID)
-		if success then
-			task.wait(15)
-			break
-		else
-			retryCount = retryCount + 1
-			task.wait(10)
-		end
+	while game.PlaceId ~= TARGET_PLACE_ID do
+		safeTeleportTo(TARGET_PLACE_ID)
+		task.wait(6) -- Đợi 6 giây trước khi thử lại nếu không qua được
 	end
 else
-	print("[Rejoin Script] Đã ở đúng Place ID. Kích hoạt logic Rejoin định kỳ (" .. REJOIN_TIME .. "s)...")
+	print("[Rejoin Script] Đã ở đúng Place ID. Kích hoạt Rejoin định kỳ (" .. REJOIN_TIME .. "s)...")
 	
 	while true do
 		task.wait(REJOIN_TIME)
-		
 		print("[Rejoin Script] Bắt đầu Rejoin định kỳ...")
-		local success = safeTeleportTo(game.PlaceId)
-		
-		if not success then
-			task.wait(10)
-		end
+		safeTeleportTo(game.PlaceId)
 	end
 end
