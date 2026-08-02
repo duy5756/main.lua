@@ -1,45 +1,60 @@
-
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
-local REJOIN_TIME = 3600 -- 1 tiếng
-local player = Players.LocalPlayer
+-- CONFIGURATION
+local REJOIN_TIME = 3600 -- Thời gian rejoin định kỳ (1 tiếng)
+local TARGET_PLACE_ID = 129343810645058 -- Thay ID Place mong muốn vào đây
 
--- Xóa UI cũ một cách an toàn nếu có
-local pg = player:FindFirstChildOfClass("PlayerGui")
-if pg then
-	local old = pg:FindFirstChild("RejoinTimer")
-	if old then old:Destroy() end
-end
+-- Lấy LocalPlayer an toàn
+local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
--- Hàm teleport an toàn
-local function safeTeleport()
+-- Hàm Teleport an toàn với pcall
+local function safeTeleportTo(placeId)
 	for i = 1, 3 do
-		local ok = pcall(function()
-			TeleportService:Teleport(game.PlaceId) 
+		print("[Rejoin Script] Đang thử kết nối tới Place ID: " .. tostring(placeId) .. " (Lần " .. i .. ")")
+		
+		local ok, err = pcall(function()
+			-- Sử dụng TeleportService chuẩn
+			TeleportService:Teleport(placeId, player)
 		end)
 
-		if ok then return true end
+		if ok then
+			return true
+		else
+			warn("[Rejoin Script] Lỗi Teleport: " .. tostring(err))
+		end
 		task.wait(3)
 	end
 	return false
 end
 
--- Vòng lặp chính siêu tối ưu và không thể bị kẹt
-while true do
-	-- Script ngủ thẳng 1 tiếng
-	task.wait(REJOIN_TIME)
+-- TỰ ĐỘNG ĐIỀU HƯỚNG BẮT ĐẦU
+
+if game.PlaceId ~= TARGET_PLACE_ID then
+	warn("[Rejoin Script] Không đúng Place ID. Đang chuyển sang Place ID: " .. tostring(TARGET_PLACE_ID))
 	
-	-- Hết giờ, tiến hành gọi lệnh dịch chuyển
-	local success = safeTeleport()
+	local retryCount = 0
+	while retryCount < 5 do -- Giới hạn 5 lần thử để tránh lặp vô tận khi sai Place ID
+		local success = safeTeleportTo(TARGET_PLACE_ID)
+		if success then
+			task.wait(15)
+			break
+		else
+			retryCount = retryCount + 1
+			task.wait(10)
+		end
+	end
+else
+	print("[Rejoin Script] Đã ở đúng Place ID. Kích hoạt logic Rejoin định kỳ (" .. REJOIN_TIME .. "s)...")
 	
-	if success then
-		-- Đợi 60 giây để Roblox xử lý việc chuyển server. 
-		-- Nếu sau 60 giây vẫn bị kẹt lại server cũ (do lỗi kết nối), 
-		-- vòng lặp sẽ tự động chạy tiếp một chu kỳ 1 tiếng mới chứ không bị đóng băng!
-		task.wait(60) 
-	else
-		-- Nếu cả 3 lần thử đều lỗi, đợi 10 giây rồi thử lại ngay lập tức thay vì đợi thêm 1 tiếng
-		task.wait(10)
+	while true do
+		task.wait(REJOIN_TIME)
+		
+		print("[Rejoin Script] Bắt đầu Rejoin định kỳ...")
+		local success = safeTeleportTo(game.PlaceId)
+		
+		if not success then
+			task.wait(10)
+		end
 	end
 end
